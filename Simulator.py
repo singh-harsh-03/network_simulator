@@ -10,6 +10,8 @@ class PhysicalLayerDevice:
     def send_data(self, data, destination_mac=None):
         if self.connection:
             self.connection.receive_data(data, destination_mac)
+        if isinstance(self.connection, Switch):
+                self.connection.forward(data, destination_mac)
 
     def receive_data(self, data):
         print(f"Device {self.device_id} received data: {data}")
@@ -80,6 +82,11 @@ class Switch(DataLinkLayerDevice):
         else:
             print(f"MAC address {destination_mac} not found in the switch table.")
 
+    def print_switch_table(self):
+        print("Switch Table:")
+        for mac_address, port in self.table.items():
+            print(f"MAC Address: {mac_address}, Port: {port}")
+
 
 
 class ErrorControlProtocol:
@@ -132,7 +139,11 @@ class FlowControlProtocol:
         # For basic implementation, we'll simply send data in chunks of window_size
 
         # Divide data into chunks based on window_size
-        chunks = [data[i:i + window_size] for i in range(0, len(data), window_size)]
+        chunks = []
+        for i in range(0, len(data), window_size):
+            chunk = data[i:i + window_size]
+            chunks.append(chunk)
+
 
         # Simulate sending each chunk and waiting for acknowledgment
         for chunk in chunks:
@@ -154,7 +165,7 @@ class FlowControlProtocol:
 
 # Example usage:
 window_size = 3
-data = "ABCDEFGHIJKLMNOPQUVWXYZ"
+data = "ABCDEFGHIJKLMNOPQUVWX"
 FlowControlProtocol.sliding_window(window_size, data)
 
 
@@ -175,10 +186,44 @@ hub.broadcast("Hello from the hub")
 
 # Test case: Create a switch with five end devices connected to it
 switch = Switch("Switch1")
-devices = [DataLinkLayerDevice(f"Device{i}") for i in range(1, 6)]
+devices = []  # Initialize an empty list
+
+for i in range(1, 6):  
+    device = DataLinkLayerDevice(f"Device{i}")  # Create a DataLinkLayerDevice object with a unique ID
+    devices.append(device)  # Add the device to the list
+
 for i, device in enumerate(devices):
-    device.set_mac_address(f"00:11:22:33:44:0{i}")
+    device.set_mac_address(f"00:11:22:33:44:0{i+1}")
     switch.learn_mac_address(device.mac_address, i + 1)  # Assuming ports start from 1
+    switch.connect(device)
+
+
+# Test case: Send data from Device1 to Device3 through the switch
+device1.send_data("Hello from Device1", "00:11:22:33:44:03")
+switch.forward("Hello from Device1", "00:11:22:33:44:03")
+
+
+# Test case: Send data from Device2 to Device5 through the switch
+device2.send_data("Hello from Device2", "00:11:22:33:44:05")
+switch.forward("Hello from Device2", "00:11:22:33:44:05")
+
+
+# Test case: Send data from Device3 to Device1 through the switch
+device3 = devices[2]  # Get the third device from the list
+device3.send_data("Hello from Device3", "00:11:22:33:44:01")
+switch.forward("Hello from Device3","00:11:22:33:44:01")
+device4 = devices[3]  # Get the fourth device from the list
+device5 = devices[4] 
+# Test case: Send data from Device4 to Device2 through the switch
+device4.send_data("Hello from Device4", "00:11:22:33:44:02")
+switch.forward("Hello from Device4","00:11:22:33:44:02")
+
+# Test case: Send data from Device5 to Device4 through the switch
+device5.send_data("Hello from Device5", "00:11:22:33:44:04")
+switch.forward("Hello from Device5","00:11:22:33:44:04")
+
+switch.print_switch_table()
+
 
 # Enable data transmission between devices with flow control
 for i, device in enumerate(devices):
@@ -189,4 +234,5 @@ total_broadcast_domains = 1  # One broadcast domain per hub/switch
 total_collision_domains = len(devices)  # One collision domain per device in a hub/switch
 print("Total Broadcast Domains:", total_broadcast_domains)
 print("Total Collision Domains:", total_collision_domains)
+
 
