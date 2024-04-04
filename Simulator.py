@@ -1,4 +1,7 @@
 import random
+import networkx as nx
+import matplotlib.pyplot as plt
+
 class PhysicalLayerDevice:
     def __init__(self, device_id):
         self.device_id = device_id
@@ -11,7 +14,7 @@ class PhysicalLayerDevice:
         if self.connection:
             self.connection.receive_data(data, destination_mac)
         if isinstance(self.connection, Switch):
-                self.connection.forward(data, destination_mac)
+            self.connection.forward(data, destination_mac)
 
     def receive_data(self, data):
         print(f"Device {self.device_id} received data: {data}")
@@ -88,7 +91,6 @@ class Switch(DataLinkLayerDevice):
             print(f"MAC Address: {mac_address}, Port: {port}")
 
 
-
 class ErrorControlProtocol:
     @staticmethod
     def checksum(data):
@@ -163,6 +165,23 @@ class FlowControlProtocol:
                 else:
                     print("Failed to receive acknowledgment for resent chunk:", chunk)
 
+class EndDevice:
+    def __init__(self, device_id):
+        self.device_id = device_id
+        self.connection = None
+
+    def connect(self, connection):
+        self.connection = connection
+
+    def send_data(self, data):
+        if self.connection:
+            self.connection.receive_data(data)
+
+    def receive_data(self, data):
+        print(f"Device {self.device_id} received data: {data}")
+
+
+
 # Example usage:
 window_size = 3
 data = "ABCDEFGHIJKLMNOPQUVWX"
@@ -179,10 +198,36 @@ device2.send_data("Hello from Device 2")
 
 # Test case 2: Star topology with five end devices connected to a hub
 hub = Hub()
-devices = [PhysicalLayerDevice(f"Device{i}") for i in range(1, 6)]
-for device in devices:
+end_devices = [EndDevice(f"Device{i}") for i in range(1, 6)]
+for device in end_devices:
     hub.connect_device(device)
+
+# Enable communication within end devices by broadcasting data through the hub
 hub.broadcast("Hello from the hub")
+
+# Create the network topology graph
+G = nx.Graph()
+
+# Add nodes for hub and end devices
+G.add_node("Hub")
+for device in end_devices:
+    G.add_node(device.device_id)
+
+# Add edges for connections
+for device in end_devices:
+    G.add_edge("Hub", device.device_id)
+
+# Visualize the network topology
+pos = nx.spring_layout(G)
+nx.draw_networkx_nodes(G, pos, nodelist=["Hub"], node_color='blue', node_size=2000)
+nx.draw_networkx_nodes(G, pos, nodelist=[device.device_id for device in end_devices], node_color='skyblue', node_size=1000)
+nx.draw_networkx_edges(G, pos, width=2)
+
+nx.draw_networkx_labels(G, pos, font_size=12, font_family='sans-serif')
+
+plt.title("Network Topology - Hub with End Devices")
+plt.axis('off')
+plt.show()
 
 # Test case: Create a switch with five end devices connected to it
 switch = Switch("Switch1")
@@ -235,4 +280,30 @@ total_collision_domains = len(devices)  # One collision domain per device in a h
 print("Total Broadcast Domains:", total_broadcast_domains)
 print("Total Collision Domains:", total_collision_domains)
 
+# Create the network topology graph
+G = nx.Graph()
+
+# Add nodes for devices and switch
+devices = ["Device1", "Device2", "Device3", "Device4", "Device5"]
+for device in devices:
+    G.add_node(device)
+
+G.add_node("Switch1")
+
+# Add edges for connections
+connections = [("Device1", "Switch1"), ("Device2", "Switch1"),
+               ("Device3", "Switch1"), ("Device4", "Switch1"),
+               ("Device5", "Switch1")]
+
+G.add_edges_from(connections)
+
+# Visualize the network topology
+pos = nx.spring_layout(G)
+nx.draw_networkx_nodes(G, pos, node_color='skyblue', node_size=2000)
+nx.draw_networkx_edges(G, pos, edge_color='black', width=2)
+nx.draw_networkx_labels(G, pos, font_size=12, font_family='sans-serif')
+
+plt.title("Network Topology")
+plt.axis('off')
+plt.show()
 
