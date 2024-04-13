@@ -1,4 +1,5 @@
 import random
+import numpy as np
 import networkx as nx
 import matplotlib.pyplot as plt
 
@@ -10,14 +11,26 @@ class PhysicalLayerDevice:
     def connect(self, connection):
         self.connection = connection
 
-    def send_data(self, data, destination_mac=None):
+    def send_data(self, data, destination_mac=None, window_size=3):
         if self.connection:
-            self.connection.receive_data(data, destination_mac)
-        if isinstance(self.connection, Switch):
-            self.connection.forward(data, destination_mac)
-
-    def receive_data(self, data):
-        print(f"Device {self.device_id} received data: {data}")
+            FlowControlProtocol.sliding_window(window_size, data)
+            checksum = ErrorControlProtocol.checksum(data)
+            self.connection.send(data, destination_mac, checksum,sender_id=self.device_id)
+    
+    def receive_data(self, data, checksum, sender_id):
+        """
+        Receive data along with checksum and sender ID.
+        :param data: The received data (string).
+        :param checksum: The checksum received along with the data.
+        :param sender_id: The ID of the sender device.
+        """
+        # Verify checksum
+        if not ErrorControlProtocol.detect_errors(data, checksum):
+            # Data is valid, process it
+            print(f"Device {self.device_id} received data from {sender_id}: {data}")
+        else:
+            # Data contains errors
+            print(f"Error: Data received by {self.device_id} from {sender_id} contains errors")
 
 
 class Hub:
@@ -27,9 +40,11 @@ class Hub:
     def connect_device(self, device):
         self.connected_devices.append(device)
 
-    def broadcast(self, data):
+    def broadcast(self, data, sender_id):
+        checksum = ErrorControlProtocol.checksum(data)
         for device in self.connected_devices:
-            device.receive_data(data)
+            if device.device_id != sender_id:  # Exclude the sender from receiving the broadcast
+                device.receive_data(data,checksum,sender_id)
 
 
 class Connection:
@@ -39,10 +54,12 @@ class Connection:
         device1.connect(self)
         device2.connect(self)
 
-    def receive_data(self, data, destination_mac=None):
-        # Simulate transmission medium (e.g., wire)
-        self.device1.receive_data(data)
-        self.device2.receive_data(data)
+    def send(self, data, destination_mac=None, checksum=None,sender_id=None):
+        if destination_mac == self.device1.device_id:
+            self.device1.receive_data(data,checksum,sender_id)
+        elif destination_mac == self.device2.device_id:
+            self.device2.receive_data(data,checksum,sender_id)
+
 
 
 class DataLinkLayerDevice(PhysicalLayerDevice):
@@ -100,7 +117,13 @@ class ErrorControlProtocol:
         :return: The checksum value.
         """
         # Simple sum-based checksum calculation
-        return sum(data)
+        if isinstance(data, str):
+            # Calculate checksum using ASCII values of characters in the string
+            checksum_value = sum(ord(char) for char in data)
+            return checksum_value
+        else:
+            raise TypeError("Checksum calculation requires a string input")
+
 
     @staticmethod
     def detect_errors(data, checksum):
@@ -169,21 +192,119 @@ class EndDevice(PhysicalLayerDevice):
     pass  # Inherits from PhysicalLayerDevice
 
 
-# Example usage:
-window_size = 3
-data = "ABCDEFGHIJKLMNOPQUVWX"
-FlowControlProtocol.sliding_window(window_size, data)
-
-
 
 # Test case 1: Two end devices with a dedicated connection
 device1 = PhysicalLayerDevice("Device1")
 device2 = PhysicalLayerDevice("Device2")
 connection = Connection(device1, device2)
-device1.send_data("Hello from Device 1")
-device2.send_data("Hello from Device 2")
+device1.send_data("Hello from Device 1", destination_mac="Device2")
+device2.send_data("Hello from Device 2", destination_mac="Device1")
 
-# Test case 2: Star topology with five end devices connected to a hub
+#Create a star toplogy with five end devices connected to hub
+hub=Hub()
+end_devices = [EndDevice(f"Device{i}") for i in range(1,6)]
+
+for device in end_devices:
+    hub.connect_device(device)
+
+
+# Enable communication within end devices via the hub's broadcast
+data_to_broadcast = "Hello, everyone!"
+sender_id = end_devices[0].device_id  # Assuming the first device is initiating the broadcast
+hub.broadcast(data_to_broadcast, sender_id)
+
+# Define the devices
+devices = ["Device1", "Device2"]
+
+# Create a plot for visual representation
+plt.figure(figsize=(6, 4))
+
+# Plot the devices
+for i, device in enumerate(devices):
+    plt.text(i, 0.5, device, ha='center', va='center', size=12, bbox=dict(facecolor='lightblue', alpha=0.5))
+
+# Draw a line representing the dedicated connection
+plt.plot([0, 1], [0.5, 0.5], color='black', linestyle='-', linewidth=2)
+
+# Add labels and title
+plt.title("Test Case 1: Two End Devices with Dedicated Connection")
+plt.axis("off")
+plt.show()
+
+
+# Define the devices and hub
+devices = ["Device1", "Device2", "Device3", "Device4", "Device5"]
+hub = "Hub"
+
+# Create a plot for visual representation
+plt.figure(figsize=(8, 6))
+
+# Plot the devices around the hub
+num_devices = len(devices)
+theta = 2 * np.pi / num_devices  # Calculate angle between devices
+radius = 2
+
+for i, device in enumerate(devices):
+    x = radius * np.cos(i * theta)
+    y = radius * np.sin(i * theta)
+    plt.text(x, y, device, ha='center', va='center', size=12, bbox=dict(facecolor='lightblue', alpha=0.5))
+    plt.plot([0, x], [0, y], color='black', linestyle='-', linewidth=1)  # Connect device to hub
+
+# Plot the hub at the center
+plt.text(0, 0, hub, ha='center', va='center', size=12, bbox=dict(facecolor='lightgreen', alpha=0.5))
+
+plt.title("Star Topology: Hub with Five End Devices")
+plt.axis("off")
+plt.show()
+
+# Example usage:
+window_size = 3
+data = "ABCDEFGHIJKLMNOPQUVWXYZ"
+FlowControlProtocol.sliding_window(window_size, data)
+
+
+switch = Switch("Switch1")
+devices = []  # Initialize an empty list
+
+for i in range(1, 6):  
+    device = DataLinkLayerDevice(f"Device{i}")  # Create a DataLinkLayerDevice object with a unique ID
+    devices.append(device)  # Add the device to the list
+
+for i, device in enumerate(devices):
+    device.set_mac_address(f"00:11:22:33:44:0{i+1}")
+    switch.learn_mac_address(device.mac_address, i + 1)  
+    switch.connect(device)
+
+
+# Send data from Device1 to Device3 through the switch
+device1.send_data("Hello from Device1", "00:11:22:33:44:03")
+switch.forward("Hello from Device1", "00:11:22:33:44:03")
+
+
+# Send data from Device2 to Device5 through the switch
+device2.send_data("Hello from Device2", "00:11:22:33:44:05")
+switch.forward("Hello from Device2", "00:11:22:33:44:05")
+
+
+# Send data from Device3 to Device1 through the switch
+device3 = devices[2]  # Get the third device from the list
+device3.send_data("Hello from Device3", "00:11:22:33:44:01")
+switch.forward("Hello from Device3","00:11:22:33:44:01")
+device4 = devices[3]  
+device5 = devices[4] 
+
+# Send data from Device4 to Device2 through the switch
+device4.send_data("Hello from Device4", "00:11:22:33:44:02")
+switch.forward("Hello from Device4","00:11:22:33:44:02")
+
+# Send data from Device5 to Device4 through the switch
+device5.send_data("Hello from Device5", "00:11:22:33:44:04")
+switch.forward("Hello from Device5","00:11:22:33:44:04")
+
+switch.print_switch_table()
+
+
+# Test case 2: Star topology with five end devices connected to each hub
 hub1 = Hub()
 hub2 = Hub()
 
@@ -213,11 +334,13 @@ for device in end_devices1:
 for device in end_devices2:
     device.send_data("Hello from Hub2", destination_mac="Broadcast")
 
-# Report the total number of broadcast and collision domains
-total_broadcast_domains = 2  # Two broadcast domains (one per hub/switch)
-total_collision_domains = len(end_devices1) + len(end_devices2)  # One collision domain per device in each hub/switch
-print("Total Broadcast Domains:", total_broadcast_domains)
-print("Total Collision Domains:", total_collision_domains)
+
+
+
+# Enable data transmission between devices with flow control
+for i, device in enumerate(devices):
+    device.send_data(f"Hello from {device.device_id}", "00:11:22:33:44:05") # Broadcasting to device 5
+
 
 
 # Create the network topology graph
@@ -243,7 +366,8 @@ for device in end_devices2:
 G.add_edge("Switch", "Hub1")
 G.add_edge("Switch", "Hub2")
 
-# # Visualize the network topology
+
+ # Visualize the network topology
 pos = nx.spring_layout(G)
 nx.draw_networkx_nodes(G, pos, nodelist=["Hub1", "Hub2"], node_color='blue', node_size=3000)
 nx.draw_networkx_nodes(G, pos, nodelist=["Switch"], node_color='red', node_size=4000 )
@@ -255,48 +379,9 @@ nx.draw_networkx_labels(G, pos, font_size=8, font_family='sans-serif')
 plt.title("Network Topology - Hub with End Devices")
 plt.show()
 
-# Test case: Create a switch with five end devices connected to it
-switch = Switch("Switch1")
-devices = []  # Initialize an empty list
-
-for i in range(1, 6):  
-    device = DataLinkLayerDevice(f"Device{i}")  # Create a DataLinkLayerDevice object with a unique ID
-    devices.append(device)  # Add the device to the list
-
-for i, device in enumerate(devices):
-    device.set_mac_address(f"00:11:22:33:44:0{i+1}")
-    switch.learn_mac_address(device.mac_address, i + 1)  
-    switch.connect(device)
-
-
-# Test case: Send data from Device1 to Device3 through the switch
-device1.send_data("Hello from Device1", "00:11:22:33:44:03")
-switch.forward("Hello from Device1", "00:11:22:33:44:03")
-
-
-# Test case: Send data from Device2 to Device5 through the switch
-device2.send_data("Hello from Device2", "00:11:22:33:44:05")
-switch.forward("Hello from Device2", "00:11:22:33:44:05")
-
-
-# Test case: Send data from Device3 to Device1 through the switch
-device3 = devices[2]  # Get the third device from the list
-device3.send_data("Hello from Device3", "00:11:22:33:44:01")
-switch.forward("Hello from Device3","00:11:22:33:44:01")
-device4 = devices[3]  # Get the fourth device from the list
-device5 = devices[4] 
-# Test case: Send data from Device4 to Device2 through the switch
-device4.send_data("Hello from Device4", "00:11:22:33:44:02")
-switch.forward("Hello from Device4","00:11:22:33:44:02")
-
-# Test case: Send data from Device5 to Device4 through the switch
-device5.send_data("Hello from Device5", "00:11:22:33:44:04")
-switch.forward("Hello from Device5","00:11:22:33:44:04")
-
-switch.print_switch_table()
-
-
-# Enable data transmission between devices with flow control
-for i, device in enumerate(devices):
-    device.send_data(f"Hello from {device.device_id}", "00:11:22:33:44:05") # Broadcasting to device 5
+# Report the total number of broadcast and collision domains
+total_broadcast_domains = 2  # Two broadcast domains (one per hub/switch)
+total_collision_domains = len(end_devices1) + len(end_devices2)  # One collision domain per device in each hub/switch
+print("Total Broadcast Domains:", total_broadcast_domains)
+print("Total Collision Domains:", total_collision_domains)
 
