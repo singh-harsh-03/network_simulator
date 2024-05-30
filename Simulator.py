@@ -2,6 +2,7 @@ import random
 import numpy as np
 import networkx as nx
 import matplotlib.pyplot as plt
+import time
 
 class PhysicalLayerDevice:
     def __init__(self, device_id):
@@ -15,22 +16,22 @@ class PhysicalLayerDevice:
         if self.connection:
             FlowControlProtocol.sliding_window(window_size, data)
             checksum = ErrorControlProtocol.checksum(data)
-            self.connection.send(data, destination_mac, checksum,sender_id=self.device_id)
+            self.connection.send(data, destination_mac, checksum,receiver_id=self.device_id)
     
-    def receive_data(self, data, checksum, sender_id):
+    def receive_data(self, data, checksum, receiver_id):
         """
         Receive data along with checksum and sender ID.
         :param data: The received data (string).
         :param checksum: The checksum received along with the data.
-        :param sender_id: The ID of the sender device.
+        :param receiver_id: The ID of the sender device.
         """
         # Verify checksum
         if not ErrorControlProtocol.detect_errors(data, checksum):
             # Data is valid, process it
-            print(f"Device {self.device_id} received data from {sender_id}: {data}")
+            print(f"Device {self.device_id} received data from {receiver_id}: {data}")
         else:
             # Data contains errors
-            print(f"Error: Data received by {self.device_id} from {sender_id} contains errors")
+            print(f"Error: Data received by {self.device_id} from {receiver_id} contains errors")
 
 
 class Hub:
@@ -40,11 +41,11 @@ class Hub:
     def connect_device(self, device):
         self.connected_devices.append(device)
 
-    def broadcast(self, data, sender_id):
+    def broadcast(self, data, receiver_id):
         checksum = ErrorControlProtocol.checksum(data)
         for device in self.connected_devices:
-            if device.device_id != sender_id:  # Exclude the sender from receiving the broadcast
-                device.receive_data(data,checksum,sender_id)
+            if device.device_id != receiver_id: 
+                device.receive_data(data,checksum,receiver_id)
 
 
 class Connection:
@@ -54,11 +55,12 @@ class Connection:
         device1.connect(self)
         device2.connect(self)
 
-    def send(self, data, destination_mac=None, checksum=None,sender_id=None):
-        if destination_mac == self.device1.device_id:
-            self.device1.receive_data(data,checksum,sender_id)
-        elif destination_mac == self.device2.device_id:
-            self.device2.receive_data(data,checksum,sender_id)
+    def send(self, data, destination_mac=None, checksum=None,receiver_id=None):
+        if AccessControlProtocol.control_access():
+            if destination_mac == self.device1.device_id:
+                self.device1.receive_data(data,checksum,receiver_id)
+            elif destination_mac == self.device2.device_id:
+                self.device2.receive_data(data,checksum,receiver_id)
 
 
 
@@ -99,6 +101,13 @@ class Switch(DataLinkLayerDevice):
         if destination_mac in self.table:
             port = self.table[destination_mac]
             print(f"Forwarding data to port {port}: {data}")
+
+        elif destination_mac == "Broadcast":
+            print(f"Broadcasting data to all ports: {data}")
+            # Forward data to all connected devices (except the source)
+            for mac_addr, port in self.table.items():
+                if mac_addr != self.mac_address:  # Exclude the source device
+                    print(f"Forwarding to port {port}: {data}")
         else:
             print(f"MAC address {destination_mac} not found in the switch table.")
 
@@ -116,23 +125,37 @@ class ErrorControlProtocol:
         :param data: The data for which the checksum will be calculated.
         :return: The checksum value.
         """
-        # Simple sum-based checksum calculation
         if isinstance(data, str):
             # Calculate checksum using ASCII values of characters in the string
             checksum_value = sum(ord(char) for char in data)
             return checksum_value
         else:
-            raise TypeError("Checksum calculation requires a string input")
+            print(f"requires a String type")
+
+    @staticmethod
+    def binary_checksum(data_blocks, n_bits):
+        """
+        Calculates the checksum of the data using binary addition.
+        :param data_blocks: List of data blocks (each block represented as an integer).
+        :param n_bits: Number of bits in each data block.
+        :return: The checksum value.
+        """
+        # Calculate the sum of all data blocks
+        sum_data = sum(data_blocks)
+
+        # Add carry to the sum, if any
+        while sum_data >> n_bits:
+            sum_data = (sum_data & ((1 << n_bits) - 1)) + (sum_data >> n_bits)
+
+        # Perform one's complement
+        checksum = ~sum_data & ((1 << n_bits) - 1)
+
+        return checksum
+
 
 
     @staticmethod
     def detect_errors(data, checksum):
-        """
-        Detects errors in the received data using a checksum.
-        :param data: The received data.
-        :param checksum: The checksum received along with the data.
-        :return: True if errors are detected, False otherwise.
-        """
         # Calculate the checksum of the received data
         calculated_checksum = ErrorControlProtocol.checksum(data)
 
@@ -140,56 +163,101 @@ class ErrorControlProtocol:
         if calculated_checksum == checksum:
             return False  # No errors detected
         else:
-            return True  # Errors detected
+            return True
+    
+    @staticmethod
+    def detect_errors_binary(data_blocks, checksum, n_bits):
+        """
+        Detects errors in the received data by comparing the checksum.
+        :param data_blocks: List of received data blocks (each block represented as an integer).
+        :param checksum: The checksum received along with the data.
+        :param n_bits: Number of bits in each data block.
+        :return: True if errors are detected, False otherwise.
+        """
+        # Calculate the sum of all data blocks and checksum
+        sum_data = sum(data_blocks) + checksum
+
+        # Add carry to the sum, if any
+        while sum_data >> n_bits:
+            sum_data = (sum_data & ((1 << n_bits) - 1)) + (sum_data >> n_bits)
+
+        # Perform one's complement
+        computed_checksum = ~sum_data & ((1 << n_bits) - 1)
+
+        # Check if the result is all 1s
+        if computed_checksum == 0:
+            return False  # No errors detected
+        else:
+            return True
+
 
 
 class AccessControlProtocol:
     @staticmethod
     def control_access():
-        # Placeholder for access control
-        # For basic implementation, let's use CSMA/CD (Carrier Sense Multiple Access with Collision Detection)
-        # In this simple version, we assume there's no collision detection, just a simple carrier sense mechanism
+        # For basic implementation,used CSMA/CD.
+        idle_probability = 0.1  # Probability of the medium being idle
+        max_backoff_attempts = 10  # Maximum number of backoff attempts
 
-        idle_probability = 0.1  # Assuming 10% chance that the medium is idle
-        if random.random() < idle_probability:
-            return True  # Medium is idle, device can transmit
-        else:
-            return False
+        backoff_attempts = 0
+        
+        while backoff_attempts < max_backoff_attempts:
+            if random.random() < idle_probability:
+                return True  # Medium is idle, device can transmit
+            else:
+                # Medium is busy, wait for a random backoff period
+                backoff_time = random.uniform(0, 1)  # Random backoff time between 0 and 1 seconds
+                print(f"Medium is busy, waiting for {backoff_time:.2f} seconds...")
+                time.sleep(backoff_time)  # Simulate waiting for the backoff time
+                backoff_attempts += 1
 
+        print("Exceeded maximum backoff attempts. Channel still busy.")
+        return False
 
+#implemetation of go back n protocol
 class FlowControlProtocol:
     @staticmethod
-    def sliding_window(window_size, data):
-        # Placeholder for sliding window flow control
-        # For basic implementation, we'll simply send data in chunks of window_size
-
+    def sliding_window(window_size, data):     
         # Divide data into chunks based on window_size
-        chunks = []
-        for i in range(0, len(data), window_size):
-            chunk = data[i:i + window_size]
-            chunks.append(chunk)
+        chunks = [data[i:i + window_size] for i in range(0, len(data), window_size)]
+        base = 0
+        next_seq_num = 0
+        expected_ack = 0
 
+        while base < len(chunks):
+            # Send packets within the window
+            while next_seq_num < min(base + window_size, len(chunks)):
+                print(f"Sending packet {next_seq_num}: {chunks[next_seq_num]}")
+                next_seq_num += 1
 
-        # Simulate sending each chunk and waiting for acknowledgment
-        for chunk in chunks:
-            print("Sending chunk:", chunk)
-            # Simulate waiting for acknowledgment
-            acknowledgment_received = random.choice([True, False])  # Randomly simulate acknowledgment
-            if acknowledgment_received:
-                print("Acknowledgment received for chunk:", chunk)
-            else:
-                print("Acknowledgment not received for chunk:", chunk)
-                # Resend the chunk if acknowledgment not received
-                print("Resending chunk:", chunk)
-                # Simulate waiting for acknowledgment again
-                acknowledgment_received = random.choice([True, False])  # Randomly simulate acknowledgment after resend
+            # Receive acknowledgments within the window
+            for _ in range(base, next_seq_num):
+                acknowledgment_received = random.choice([True, False])  # Simulate ACK reception
                 if acknowledgment_received:
-                    print("Acknowledgment received for resent chunk:", chunk)
+                    print(f"Acknowledgment received for packet {_}: {chunks[_]}")
+                    expected_ack = _ + 1
                 else:
-                    print("Failed to receive acknowledgment for resent chunk:", chunk)
+                    print(f"Acknowledgment not received for packet {_}: {chunks[_]}")
+                    break
+
+            # Slide the window based on the acknowledgment received
+            if expected_ack == next_seq_num:
+                base = expected_ack
+            else:
+                print(f"Timeout occurred, resending from packet {base}: {chunks[base]}")
+                next_seq_num = base 
+
+        print("All packets transmitted successfully")
+
+
 
 class EndDevice(PhysicalLayerDevice):
-    pass  # Inherits from PhysicalLayerDevice
+    def __init__(self, device_id):
+        super().__init__(device_id)
+        self.mac_address = None
+
+    def set_mac_address(self, mac_address):
+        self.mac_address = mac_address
 
 
 
@@ -200,7 +268,7 @@ connection = Connection(device1, device2)
 device1.send_data("Hello from Device 1", destination_mac="Device2")
 device2.send_data("Hello from Device 2", destination_mac="Device1")
 
-#Create a star toplogy with five end devices connected to hub
+#Test case 2: a star toplogy with five end devices connected to hub
 hub=Hub()
 end_devices = [EndDevice(f"Device{i}") for i in range(1,6)]
 
@@ -210,8 +278,8 @@ for device in end_devices:
 
 # Enable communication within end devices via the hub's broadcast
 data_to_broadcast = "Hello, everyone!"
-sender_id = end_devices[0].device_id  # Assuming the first device is initiating the broadcast
-hub.broadcast(data_to_broadcast, sender_id)
+receiver_id = end_devices[0].device_id  # Assuming the first device is initiating the broadcast
+hub.broadcast(data_to_broadcast, receiver_id)
 
 # Define the devices
 devices = ["Device1", "Device2"]
@@ -225,14 +293,11 @@ for i, device in enumerate(devices):
 
 # Draw a line representing the dedicated connection
 plt.plot([0, 1], [0.5, 0.5], color='black', linestyle='-', linewidth=2)
-
-# Add labels and title
 plt.title("Test Case 1: Two End Devices with Dedicated Connection")
 plt.axis("off")
 plt.show()
 
 
-# Define the devices and hub
 devices = ["Device1", "Device2", "Device3", "Device4", "Device5"]
 hub = "Hub"
 
@@ -259,7 +324,7 @@ plt.show()
 
 # Example usage:
 window_size = 3
-data = "ABCDEFGHIJKLMNOPQUVWXYZ"
+data = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 FlowControlProtocol.sliding_window(window_size, data)
 
 
@@ -275,19 +340,17 @@ for i, device in enumerate(devices):
     switch.learn_mac_address(device.mac_address, i + 1)  
     switch.connect(device)
 
-
-# Send data from Device1 to Device3 through the switch
-device1.send_data("Hello from Device1", "00:11:22:33:44:03")
-switch.forward("Hello from Device1", "00:11:22:33:44:03")
+device1=devices[0]    
+device2=devices[1]
 
 
+device1.send_data("Hello from Device 1", "00:11:22:33:44:03")
+switch.forward("Hello from Device 1", "00:11:22:33:44:03")
 # Send data from Device2 to Device5 through the switch
 device2.send_data("Hello from Device2", "00:11:22:33:44:05")
 switch.forward("Hello from Device2", "00:11:22:33:44:05")
-
-
 # Send data from Device3 to Device1 through the switch
-device3 = devices[2]  # Get the third device from the list
+device3 = devices[2]  
 device3.send_data("Hello from Device3", "00:11:22:33:44:01")
 switch.forward("Hello from Device3","00:11:22:33:44:01")
 device4 = devices[3]  
@@ -302,6 +365,19 @@ device5.send_data("Hello from Device5", "00:11:22:33:44:04")
 switch.forward("Hello from Device5","00:11:22:33:44:04")
 
 switch.print_switch_table()
+
+
+data_blocks = [0b1101, 0b1010, 0b0110]  # Example data blocks (each represented as binary integers)
+n_bits = 4  # Number of bits in each data block
+checksum = ErrorControlProtocol.binary_checksum(data_blocks, n_bits)
+
+received_data_blocks = [0b1101, 0b1010, 0b0110]  # Example received data blocks
+received_checksum = 0b1111  # Received checksum (example)
+n_bits = 4  # Number of bits in each data block
+if ErrorControlProtocol.detect_errors_binary(received_data_blocks, received_checksum, n_bits):
+    print("Errors detected in the received data.")
+else:
+    print("No errors detected in the received data.")
 
 
 # Test case 2: Star topology with five end devices connected to each hub
@@ -319,34 +395,48 @@ for device in end_devices2:
 
 interconnect_switch = Switch("Switch")
 
-for device in end_devices1:
-    interconnect_switch.connect(device)
+# Connect hubs and switch
+interconnect_switch.connect(hub1)
+interconnect_switch.connect(hub2)
 
-for device in end_devices2:
-    interconnect_switch.connect(device)
-    
-# Enable communication between end devices across the network
-# Broadcasting from devices in hub1 to devices in hub2 via the switch
-for device in end_devices1:
-    device.send_data("Hello from Hub1", destination_mac="Broadcast")
+# Simulate sending a message from Device1 to all devices
+sender_id = "Device10"
+receiver_id = "Device1"
+message = "Hello, everyone, I am Device 10!"
 
-# Broadcasting from devices in hub2 to devices in hub1 via the switch
-for device in end_devices2:
-    device.send_data("Hello from Hub2", destination_mac="Broadcast")
+print(f"Sending message from {sender_id}: {message}")
 
 
+if sender_id in [device.device_id for device in end_devices1] and receiver_id in [device.device_id for device in end_devices1]:
+    hub1.broadcast(message, sender_id)
+    for i,device in enumerate(end_devices1):
+        device.set_mac_address(f"00:11:22:33:44:0{i+1}")
+        switch.learn_mac_address(device.mac_address, i + 1)
+    switch.print_switch_table()
 
+elif sender_id in [device.device_id for device in end_devices2] and receiver_id in [device.device_id for device in end_devices2]:
+    hub2.broadcast(message, sender_id)
+    for i,device in enumerate(end_devices2):
+        device.set_mac_address(f"00:11:22:33:44:0{i+1}")
+        switch.learn_mac_address(device.mac_address, i + 1)
+    switch.print_switch_table()
 
-# Enable data transmission between devices with flow control
-for i, device in enumerate(devices):
-    device.send_data(f"Hello from {device.device_id}", "00:11:22:33:44:05") # Broadcasting to device 5
+else:
+    hub1.broadcast(message,sender_id)
+    hub2.broadcast(message,sender_id)
+    for i,device in enumerate(end_devices1):
+        device.set_mac_address(f"00:11:22:33:44:0{i+1}")
+        switch.learn_mac_address(device.mac_address, i + 1)
+    for i,device in enumerate(end_devices2):
+        device.set_mac_address(f"00:11:22:33:44:0{i+1}")
+        switch.learn_mac_address(device.mac_address, i + 1)
+    switch.print_switch_table()
 
 
 
 # Create the network topology graph
 G = nx.Graph()
 
-# # Add nodes for hub and end devices
 G.add_node("Hub1")
 G.add_node("Hub2")
 for device in end_devices1:
@@ -379,7 +469,6 @@ nx.draw_networkx_labels(G, pos, font_size=8, font_family='sans-serif')
 plt.title("Network Topology - Hub with End Devices")
 plt.show()
 
-# Report the total number of broadcast and collision domains
 total_broadcast_domains = 2  # Two broadcast domains (one per hub/switch)
 total_collision_domains = len(end_devices1) + len(end_devices2)  # One collision domain per device in each hub/switch
 print("Total Broadcast Domains:", total_broadcast_domains)
