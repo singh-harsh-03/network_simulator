@@ -3,6 +3,9 @@ import numpy as np
 import networkx as nx
 import matplotlib.pyplot as plt
 import time
+import network_layer
+import Transport_application
+from FlowCtrl import FlowControlProtocol
 
 class PhysicalLayerDevice:
     def __init__(self, device_id):
@@ -214,41 +217,6 @@ class AccessControlProtocol:
         print("Exceeded maximum backoff attempts. Channel still busy.")
         return False
 
-#implemetation of go back n protocol
-class FlowControlProtocol:
-    @staticmethod
-    def sliding_window(window_size, data):     
-        # Divide data into chunks based on window_size
-        chunks = [data[i:i + window_size] for i in range(0, len(data), window_size)]
-        base = 0
-        next_seq_num = 0
-        expected_ack = 0
-
-        while base < len(chunks):
-            # Send packets within the window
-            while next_seq_num < min(base + window_size, len(chunks)):
-                print(f"Sending packet {next_seq_num}: {chunks[next_seq_num]}")
-                next_seq_num += 1
-
-            # Receive acknowledgments within the window
-            for _ in range(base, next_seq_num):
-                acknowledgment_received = random.choice([True, False])  # Simulate ACK reception
-                if acknowledgment_received:
-                    print(f"Acknowledgment received for packet {_}: {chunks[_]}")
-                    expected_ack = _ + 1
-                else:
-                    print(f"Acknowledgment not received for packet {_}: {chunks[_]}")
-                    break
-
-            # Slide the window based on the acknowledgment received
-            if expected_ack == next_seq_num:
-                base = expected_ack
-            else:
-                print(f"Timeout occurred, resending from packet {base}: {chunks[base]}")
-                next_seq_num = base 
-
-        print("All packets transmitted successfully")
-
 
 
 class EndDevice(PhysicalLayerDevice):
@@ -393,45 +361,66 @@ for device in end_devices1:
 for device in end_devices2:
     hub2.connect_device(device)
 
-interconnect_switch = Switch("Switch")
+def connect_hubs_to_switch(hub1, hub2, switch):
+    switch.connect(hub1)
+    switch.connect(hub2)
 
-# Connect hubs and switch
-interconnect_switch.connect(hub1)
-interconnect_switch.connect(hub2)
+
+# Create and setup the switch
+interconnect_switch = Switch("Switch")
+connect_hubs_to_switch(hub1, hub2, interconnect_switch)
+
+# Function to assign MAC addresses and make the switch learn them
+def setup_devices_and_learn_mac(devices, switch, start_index=1, learn=True):
+    for i, device in enumerate(devices):
+        mac_address = f"00:11:22:33:44:{start_index + i:02d}"
+        device.set_mac_address(mac_address)
+        if learn:
+            switch.learn_mac_address(mac_address, start_index + i)
+
 
 # Simulate sending a message from Device1 to all devices
-sender_id = "Device10"
+sender_id = "Device4"
 receiver_id = "Device1"
-message = "Hello, everyone, I am Device 10!"
+message = "Hello, everyone, I am Device 4!"
 
 print(f"Sending message from {sender_id}: {message}")
 
 
 if sender_id in [device.device_id for device in end_devices1] and receiver_id in [device.device_id for device in end_devices1]:
     hub1.broadcast(message, sender_id)
-    for i,device in enumerate(end_devices1):
-        device.set_mac_address(f"00:11:22:33:44:0{i+1}")
-        switch.learn_mac_address(device.mac_address, i + 1)
-    switch.print_switch_table()
 
 elif sender_id in [device.device_id for device in end_devices2] and receiver_id in [device.device_id for device in end_devices2]:
     hub2.broadcast(message, sender_id)
-    for i,device in enumerate(end_devices2):
-        device.set_mac_address(f"00:11:22:33:44:0{i+1}")
-        switch.learn_mac_address(device.mac_address, i + 1)
-    switch.print_switch_table()
 
 else:
     hub1.broadcast(message,sender_id)
     hub2.broadcast(message,sender_id)
-    for i,device in enumerate(end_devices1):
-        device.set_mac_address(f"00:11:22:33:44:0{i+1}")
-        switch.learn_mac_address(device.mac_address, i + 1)
-    for i,device in enumerate(end_devices2):
-        device.set_mac_address(f"00:11:22:33:44:0{i+1}")
-        switch.learn_mac_address(device.mac_address, i + 1)
-    switch.print_switch_table()
 
+sender_hub = None
+receiver_hub = None
+
+for device in end_devices1:
+    if device.device_id == sender_id:
+        sender_hub = hub1
+    if device.device_id == receiver_id:
+        receiver_hub = hub1
+
+for device in end_devices2:
+    if device.device_id == sender_id:
+        sender_hub = hub2
+    if device.device_id == receiver_id:
+        receiver_hub = hub2
+
+if sender_hub == receiver_hub:
+    print("Sender and receiver are in the same hub. Switch learns MAC addresses only for devices in hub1.")
+    setup_devices_and_learn_mac(end_devices1, interconnect_switch, start_index=1, learn=True)
+else:
+    print("Sender and receiver are in different hubs. Switch learns MAC addresses for all devices.")
+    setup_devices_and_learn_mac(end_devices1, interconnect_switch, start_index=1, learn=True)
+    setup_devices_and_learn_mac(end_devices2, interconnect_switch, start_index=6, learn=True)
+
+interconnect_switch.print_switch_table()
 
 
 # Create the network topology graph
@@ -474,3 +463,5 @@ total_collision_domains = len(end_devices1) + len(end_devices2)  # One collision
 print("Total Broadcast Domains:", total_broadcast_domains)
 print("Total Collision Domains:", total_collision_domains)
 
+network_layer.main()
+Transport_application.main()
